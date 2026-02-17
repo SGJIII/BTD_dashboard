@@ -134,6 +134,9 @@ def market_refresh_job():
 def _evaluate_alerts(scan_result: scanner.ScanResult, portfolio):
     """Emit alerts based on scan results and portfolio state."""
     try:
+        # Insurance expiry checks run regardless of portfolio state
+        alerts.check_insurance_expiry_alerts()
+
         positions = portfolio.positions
         candidates = scan_result.candidates
         is_trading = scan_result.is_trading_hours
@@ -156,7 +159,6 @@ def _evaluate_alerts(scan_result: scanner.ScanResult, portfolio):
 
         # OPPORTUNITY: advantage exceeds hurdle
         if advantage >= config.FUNDING_HURDLE_APR_POINTS:
-            timing_hint = "Execute now" if is_trading else "Execute at next NYSE open"
             alerts.send_opportunity_alert(
                 best_outside.ticker, worst_pos.ticker,
                 best_outside.score, worst_pos.score,
@@ -169,9 +171,6 @@ def _evaluate_alerts(scan_result: scanner.ScanResult, portfolio):
                 best_outside.ticker, worst_pos.ticker,
                 best_outside.score, worst_pos.score,
             )
-
-        # Check insurance expiry
-        alerts.check_insurance_expiry_alerts()
 
     except Exception:
         log.exception("Alert evaluation failed")
