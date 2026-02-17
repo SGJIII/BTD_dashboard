@@ -207,6 +207,18 @@ CREATE TABLE IF NOT EXISTS insurance_covers (
     created_at  TEXT
 );
 
+CREATE TABLE IF NOT EXISTS rebalance_decisions (
+    id                  INTEGER PRIMARY KEY CHECK (id = 1),
+    recommendation      TEXT NOT NULL DEFAULT 'HOLD',
+    expected_gain_usd   REAL DEFAULT 0,
+    estimated_cost_usd  REAL DEFAULT 0,
+    threshold_usd       REAL DEFAULT 0,
+    rationale           TEXT,
+    updated_at          TEXT
+);
+
+INSERT OR IGNORE INTO rebalance_decisions (id) VALUES (1);
+
 CREATE TABLE IF NOT EXISTS opportunity_log (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     ticker       TEXT NOT NULL,
@@ -543,4 +555,22 @@ def update_implemented_cash(**kwargs):
 def get_implemented_cash() -> dict:
     with get_db() as conn:
         row = conn.execute("SELECT * FROM implemented_cash WHERE id = 1").fetchone()
+        return dict(row) if row else {}
+
+
+# ── Rebalance Decisions CRUD ──────────────────────────────────────────────
+
+def update_rebalance_decision(**kwargs):
+    if not kwargs:
+        return
+    kwargs["updated_at"] = _now()
+    sets = ", ".join(f"{k} = ?" for k in kwargs)
+    vals = list(kwargs.values())
+    with get_db() as conn:
+        conn.execute(f"UPDATE rebalance_decisions SET {sets} WHERE id = 1", vals)
+
+
+def get_rebalance_decision() -> dict:
+    with get_db() as conn:
+        row = conn.execute("SELECT * FROM rebalance_decisions WHERE id = 1").fetchone()
         return dict(row) if row else {}
