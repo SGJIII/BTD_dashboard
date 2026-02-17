@@ -215,6 +215,25 @@ CREATE TABLE IF NOT EXISTS opportunity_log (
     advantage_apr REAL NOT NULL,
     triggered_at TEXT
 );
+
+CREATE TABLE IF NOT EXISTS implemented_positions (
+    coin            TEXT PRIMARY KEY,
+    ticker          TEXT NOT NULL,
+    hedge_symbol    TEXT NOT NULL,
+    long_notional   REAL NOT NULL DEFAULT 0,
+    short_notional  REAL NOT NULL DEFAULT 0,
+    updated_at      TEXT
+);
+
+CREATE TABLE IF NOT EXISTS implemented_cash (
+    id                  INTEGER PRIMARY KEY CHECK (id = 1),
+    perp_collateral     REAL NOT NULL DEFAULT 0,
+    coinbase_treasury   REAL NOT NULL DEFAULT 0,
+    emergency_reserve   REAL NOT NULL DEFAULT 0,
+    updated_at          TEXT
+);
+
+INSERT OR IGNORE INTO implemented_cash (id) VALUES (1);
 """
 
 
@@ -474,3 +493,55 @@ def insert_opportunity(ticker: str, ema_apr: float, advantage_apr: float):
             "INSERT INTO opportunity_log (ticker, ema_apr, advantage_apr, triggered_at) VALUES (?, ?, ?, ?)",
             (ticker, ema_apr, advantage_apr, _now()),
         )
+
+
+# ── Implemented Positions CRUD ────────────────────────────────────────────
+
+def upsert_implemented_position(coin: str, data: dict):
+    data["coin"] = coin
+    data["updated_at"] = _now()
+    cols = ", ".join(data.keys())
+    placeholders = ", ".join("?" for _ in data)
+    conflict = ", ".join(f"{k} = excluded.{k}" for k in data if k != "coin")
+    with get_db() as conn:
+        conn.execute(
+            f"INSERT INTO implemented_positions ({cols}) VALUES ({placeholders}) "
+            f"ON CONFLICT(coin) DO UPDATE SET {conflict}",
+            list(data.values()),
+        )
+
+
+def get_implemented_positions() -> list[dict]:
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM implemented_positions ORDER BY coin ASC"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def delete_implemented_position(coin: str):
+    with get_db() as conn:
+        conn.execute("DELETE FROM implemented_positions WHERE coin = ?", (coin,))
+
+
+def clear_implemented_positions():
+    with get_db() as conn:
+        conn.execute("DELETE FROM implemented_positions")
+
+
+# ── Implemented Cash CRUD ─────────────────────────────────────────────────
+
+def update_implemented_cash(**kwargs):
+    if not kwargs:
+        return
+    kwargs["updated_at"] = _now()
+    sets = ", ".join(f"{k} = ?" for k in kwargs)
+    vals = list(kwargs.values())
+    with get_db() as conn:
+        conn.execute(f"UPDATE implemented_cash SET {sets} WHERE id = 1", vals)
+
+
+def get_implemented_cash() -> dict:
+    with get_db() as conn:
+        row = conn.execute("SELECT * FROM implemented_cash WHERE id = 1").fetchone()
+        return dict(row) if row else {}
