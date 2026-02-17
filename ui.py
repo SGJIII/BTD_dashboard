@@ -207,6 +207,172 @@ with st.expander(f"Rejected Markets ({len(rejected)})"):
 
 st.divider()
 
+# ── Implemented State & Drift Tracking ──────────────────────────────────────
+
+with st.expander("Implemented State & Drift"):
+    impl_positions = db.get_implemented_positions()
+    impl_cash = db.get_implemented_cash()
+
+    st.markdown("**Record your actual executed positions and cash allocations below.**")
+
+    # Cash buckets form
+    with st.form("impl_cash"):
+        st.subheader("Cash Buckets")
+        cc1, cc2, cc3 = st.columns(3)
+        with cc1:
+            impl_collateral = st.number_input(
+                "Perp Collateral (USDC)", min_value=0,
+                value=int(impl_cash.get("perp_collateral", 0)), step=1000,
+            )
+        with cc2:
+            impl_treasury = st.number_input(
+                "Coinbase Treasury", min_value=0,
+                value=int(impl_cash.get("coinbase_treasury", 0)), step=1000,
+            )
+        with cc3:
+            impl_emergency = st.number_input(
+                "Emergency Reserve", min_value=0,
+                value=int(impl_cash.get("emergency_reserve", 0)), step=1000,
+            )
+        if st.form_submit_button("Save Cash"):
+            db.update_implemented_cash(
+                perp_collateral=impl_collateral,
+                coinbase_treasury=impl_treasury,
+                emergency_reserve=impl_emergency,
+            )
+            st.rerun()
+
+    # Per-position form
+    with st.form("add_impl_pos"):
+        st.subheader("Add/Update Position")
+        pc1, pc2, pc3, pc4 = st.columns(4)
+        pos_coins = [p["coin"] for p in positions] if positions else []
+        pos_labels = [f"{p['ticker']} ({p['hedge_symbol']})" for p in positions] if positions else []
+        with pc1:
+            if pos_labels:
+                sel_idx = st.selectbox("Ticker", range(len(pos_labels)), format_func=lambda i: pos_labels[i])
+            else:
+                sel_idx = None
+                st.text("No target positions")
+        with pc2:
+            impl_long = st.number_input("Long $ (stock)", min_value=0, value=0, step=1000)
+        with pc3:
+            impl_short = st.number_input("Short $ (perp)", min_value=0, value=0, step=1000)
+        with pc4:
+            pass
+        if st.form_submit_button("Save Position") and sel_idx is not None and positions:
+            p = positions[sel_idx]
+            db.upsert_implemented_position(p["coin"], {
+                "ticker": p["ticker"],
+                "hedge_symbol": p["hedge_symbol"],
+                "long_notional": impl_long,
+                "short_notional": impl_short,
+            })
+            st.rerun()
+
+    # Drift table
+    if positions and (impl_positions or any(v for k, v in impl_cash.items() if k != "id" and k != "updated_at")):
+        st.subheader("Target vs Implemented Drift")
+
+        impl_map = {ip["coin"]: ip for ip in impl_positions}
+
+        drift_rows = []
+        for p in positions:
+            coin = p["coin"]
+            ip = impl_map.get(coin, {})
+            target_alloc = p["alloc_notional"]
+            actual_long = ip.get("long_notional", 0)
+            actual_short = ip.get("short_notional", 0)
+            drift_long = actual_long - target_alloc
+            drift_short = actual_short - target_alloc
+            drift_rows.append({
+                "Ticker": p["ticker"],
+                "Hedge": p["hedge_symbol"],
+                "Target $": fmt_usd(target_alloc),
+                "Long $": fmt_usd(actual_long),
+                "Long Drift": fmt_usd(drift_long),
+                "Short $": fmt_usd(actual_short),
+                "Short Drift": fmt_usd(drift_short),
+            })
+
+        # Positions not in target (orphans)
+        target_coins = {p["coin"] for p in positions}
+        for ip in impl_positions:
+            if ip["coin"] not in target_coins:
+                drift_rows.append({
+                    "Ticker": ip["ticker"] + " *",
+                    "Hedge": ip["hedge_symbol"],
+                    "Target $": fmt_usd(0),
+                    "Long $": fmt_usd(ip["long_notional"]),
+                    "Long Drift": fmt_usd(ip["long_notional"]),
+                    "Short $": fmt_usd(ip["short_notional"]),
+                    "Short Drift": fmt_usd(ip["short_notional"]),
+                })
+
+        st.dataframe(drift_rows, use_container_width=True, hide_index=True)
+
+        # Cash drift
+        target_collateral = targets.get("perp_collateral", 0)
+        target_treasury = targets.get("coinbase_treasury", 0)
+        target_emergency = targets.get("emergency", 0)
+        ac = impl_cash.get("perp_collateral", 0)
+        at = impl_cash.get("coinbase_treasury", 0)
+        ae = impl_cash.get("emergency_reserve", 0)
+
+        st.markdown("**Cash Drift**")
+        cash_drift = [
+            {"Bucket": "Perp Collateral", "Target": fmt_usd(target_collateral), "Actual": fmt_usd(ac), "Drift": fmt_usd(ac - target_collateral)},
+            {"Bucket": "Coinbase Treasury", "Target": fmt_usd(target_treasury), "Actual": fmt_usd(at), "Drift": fmt_usd(at - target_treasury)},
+            {"Bucket": "Emergency Reserve", "Target": fmt_usd(target_emergency), "Actual": fmt_usd(ae), "Drift": fmt_usd(ae - target_emergency)},
+        ]
+        st.dataframe(cash_drift, use_container_width=True, hide_index=True)
+
+        # Action checklist
+        st.markdown("**Action Checklist**")
+        actions = []
+        for p in positions:
+            coin = p["coin"]
+            ip = impl_map.get(coin, {})
+            target = p["alloc_notional"]
+            al = ip.get("long_notional", 0)
+            ash_ = ip.get("short_notional", 0)
+            if abs(al - target) > 100:
+                direction = "BUY" if al < target else "SELL"
+                actions.append(f"- {direction} {fmt_usd(abs(al - target))} of **{p['hedge_symbol']}** (long)")
+            if abs(ash_ - target) > 100:
+                direction = "SHORT" if ash_ < target else "COVER"
+                actions.append(f"- {direction} {fmt_usd(abs(ash_ - target))} of **{p['ticker']}** (perp)")
+
+        if abs(ac - target_collateral) > 100:
+            direction = "ADD" if ac < target_collateral else "WITHDRAW"
+            actions.append(f"- {direction} {fmt_usd(abs(ac - target_collateral))} perp collateral")
+        if abs(at - target_treasury) > 100:
+            direction = "DEPOSIT" if at < target_treasury else "WITHDRAW"
+            actions.append(f"- {direction} {fmt_usd(abs(at - target_treasury))} Coinbase treasury")
+
+        if actions:
+            for a in actions:
+                st.markdown(a)
+        else:
+            st.success("Portfolio matches target — no actions needed.")
+
+        impl_updated = impl_cash.get("updated_at", "")[:19] if impl_cash.get("updated_at") else ""
+        if impl_updated:
+            st.caption(f"Implemented state last updated: {impl_updated}")
+    else:
+        st.info("Enter your implemented positions and cash above to see drift analysis.")
+
+    # Remove position button
+    if impl_positions:
+        st.markdown("---")
+        rm_labels = [f"{ip['ticker']} ({ip['hedge_symbol']})" for ip in impl_positions]
+        rm_idx = st.selectbox("Remove position", range(len(rm_labels)), format_func=lambda i: rm_labels[i], key="rm_impl")
+        if st.button("Remove"):
+            db.delete_implemented_position(impl_positions[rm_idx]["coin"])
+            st.rerun()
+
+st.divider()
+
 # ── Insurance Manager ───────────────────────────────────────────────────────
 
 with st.expander("Insurance Manager"):
