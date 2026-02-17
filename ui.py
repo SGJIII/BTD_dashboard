@@ -10,7 +10,7 @@ import db
 
 st.set_page_config(
     page_title="Arbiter Dashboard",
-    page_icon="⚖️",
+    page_icon="\u2696\ufe0f",
     layout="wide",
     initial_sidebar_state="collapsed",
 )
@@ -29,20 +29,56 @@ st.markdown("""
 
 def fmt_usd(val) -> str:
     if val is None:
-        return "—"
+        return "\u2014"
     return f"${val:,.0f}"
 
 
 def fmt_pct(val) -> str:
     if val is None:
-        return "—"
+        return "\u2014"
     return f"{val:.2f}%"
 
 
 def fmt_leverage(val) -> str:
     if val is None or val == 0:
-        return "—"
+        return "\u2014"
     return f"{val:.2f}x"
+
+
+def _min_actionable_budget() -> float:
+    """Estimate the minimum budget that produces H_max >= min_ticket."""
+    b_low = (config.MIN_TICKET_USD * (1 + config.COLLATERAL_FRACTION)
+             + config.EMERGENCY_FLOOR + config.OPS_RESERVE)
+    b_high = config.MIN_TICKET_USD * (1 + config.COLLATERAL_FRACTION) / (
+        1 - config.EMERGENCY_PCT - config.MIN_TICKET_BUDGET_PCT * (1 + config.COLLATERAL_FRACTION)
+    ) + config.OPS_RESERVE
+    return max(b_low, b_high)
+
+
+def _render_rejected_table(rejected_list: list[dict], cohort_size: int):
+    """Render the enhanced rejected markets table with APR transparency."""
+    rej_rows = []
+    for r in rejected_list:
+        row = {
+            "Ticker": r["ticker"],
+            "Reason": r["reason"],
+            "Instant APR": fmt_pct(r.get("instant_apr")),
+            "Forecast APR": fmt_pct(r.get("forecast_apr")),
+            "Score": fmt_pct(r.get("score")),
+            "Cap $": fmt_usd(r.get("cap_final")),
+        }
+        pre_rank = r.get("pre_rank")
+        if pre_rank is not None:
+            row["Pre-Rank"] = str(pre_rank)
+        else:
+            row["Pre-Rank"] = "\u2014"
+        rej_rows.append(row)
+    st.dataframe(rej_rows, use_container_width=True, hide_index=True)
+    if cohort_size > 0:
+        st.caption(
+            f"Deep-scanned top {cohort_size} markets by instantaneous funding. "
+            f"Markets ranked below the cutoff were not deep-scanned (no forecast/score)."
+        )
 
 
 # ── Init ────────────────────────────────────────────────────────────────────
@@ -52,11 +88,11 @@ targets = db.get_portfolio_targets()
 user = db.get_user_inputs()
 positions = db.get_portfolio_positions()
 rejected = db.get_rejected_markets()
-has_data = targets.get("num_positions", 0) > 0
 
+run_status = targets.get("run_status")  # None = never run, 'success'/'partial'/'no_candidates'
+num_positions = targets.get("num_positions", 0)
+deep_scan_cohort = targets.get("deep_scan_cohort", 0)
 budget = user.get("budget", config.DEFAULT_BUDGET)
-emergency = max(config.EMERGENCY_FLOOR, config.EMERGENCY_PCT * budget)
-deployable = budget - emergency - config.OPS_RESERVE
 
 # ── Sidebar: Budget ─────────────────────────────────────────────────────────
 
@@ -69,21 +105,115 @@ with st.sidebar:
         )
         if st.form_submit_button("Update Budget"):
             db.update_user_inputs(budget=new_budget)
-            st.success("Saved — worker will recompute next cycle.")
-            time.sleep(0.5)
+            with st.spinner("Recomputing portfolio with new budget..."):
+                try:
+                    from worker import market_refresh_job
+                    market_refresh_job()
+                    st.success("Saved and recomputed.")
+                except Exception as e:
+                    st.warning(f"Saved, but immediate recompute failed: {e}")
             st.rerun()
 
-    new_emergency = max(config.EMERGENCY_FLOOR, config.EMERGENCY_PCT * new_budget)
-    new_deployable = new_budget - new_emergency - config.OPS_RESERVE
+    preview = config.compute_budget_buckets(new_budget)
+    new_emergency = preview["emergency"]
+    new_deployable = preview["deployable"]
+    new_h_max = preview["h_max"]
+    new_min_ticket = preview["min_ticket"]
     st.caption(f"Emergency: {fmt_usd(new_emergency)}")
     st.caption(f"Deployable: {fmt_usd(new_deployable)}")
+    st.caption(f"H_max: {fmt_usd(new_h_max)}")
+
+    # Budget feasibility indicator
+    if new_h_max < new_min_ticket:
+        st.warning(
+            f"Budget too small for any position. "
+            f"Min ticket = {fmt_usd(new_min_ticket)}, but H_max = {fmt_usd(new_h_max)}. "
+            f"Increase budget above ~{fmt_usd(_min_actionable_budget())} to enable allocation."
+        )
+
 
 # ── Main Content ────────────────────────────────────────────────────────────
 
 st.title("Arbiter Dashboard")
 
-if not has_data:
-    st.warning("Waiting for worker to fetch market data... Run `python worker.py`")
+# ── Empty State Handling ────────────────────────────────────────────────────
+
+if run_status is None:
+    # Worker has never run
+    st.warning(
+        "No data yet — the worker has not completed a scan. "
+        "Run `python worker.py` to start."
+    )
+    st.stop()
+
+if num_positions == 0:
+    # Worker ran but produced zero positions — show diagnostics
+    st.error("Worker completed but found **zero viable positions**.")
+
+    # Zero-allocation reason card
+    buckets = config.compute_budget_buckets(budget)
+    h_max = buckets["h_max"]
+    min_ticket = buckets["min_ticket"]
+
+    with st.container():
+        st.subheader("Why zero positions?")
+        reasons = []
+        if h_max < min_ticket:
+            reasons.append(
+                f"**Budget constraint**: H_max ({fmt_usd(h_max)}) < min ticket "
+                f"({fmt_usd(min_ticket)}). No position can meet the minimum size."
+            )
+        if deep_scan_cohort == 0:
+            reasons.append(
+                "**No markets passed pre-filter**: All mapped markets had negative/zero "
+                "instantaneous funding or failed hard gates."
+            )
+        elif not any(r.get("reason", "").startswith("negative funding forecast") for r in rejected):
+            reasons.append(
+                f"**Deep-scanned {deep_scan_cohort} markets** but none had positive "
+                f"forecast APR after EMA smoothing."
+            )
+
+        # Check for specific rejection patterns
+        nasdaq_fails = [r for r in rejected if "not in public directories" in r.get("reason", "")]
+        neg_funding = [r for r in rejected if r.get("reason") == "negative/zero instantaneous funding"]
+        neg_forecast = [r for r in rejected if r.get("reason") == "negative funding forecast"]
+
+        if nasdaq_fails:
+            reasons.append(
+                f"**{len(nasdaq_fails)} market(s)** rejected: hedge symbol not found in "
+                f"NASDAQ/NYSE directories."
+            )
+        if neg_forecast:
+            tickers = ", ".join(r["ticker"] for r in neg_forecast[:5])
+            reasons.append(
+                f"**{len(neg_forecast)} market(s)** had negative funding forecast "
+                f"after EMA smoothing ({tickers})."
+            )
+
+        if not reasons:
+            reasons.append(
+                "All eligible markets were either too small (below min ticket) or "
+                "had insufficient funding data."
+            )
+
+        for r in reasons:
+            st.markdown(f"- {r}")
+
+        st.caption(
+            f"Budget: {fmt_usd(budget)} | H_max: {fmt_usd(h_max)} | "
+            f"Min ticket: {fmt_usd(min_ticket)} | Deep-scanned: {deep_scan_cohort} markets"
+        )
+
+    # Still show rejected table below for transparency
+    st.divider()
+
+    with st.expander(f"Rejected Markets ({len(rejected)})", expanded=True):
+        if rejected:
+            _render_rejected_table(rejected, deep_scan_cohort)
+        else:
+            st.info("No market data — worker may not have fetched markets yet.")
+
     st.stop()
 
 # ── Portfolio Header ────────────────────────────────────────────────────────
@@ -94,13 +224,13 @@ with c1:
 with c2:
     st.metric("Est. $/day", fmt_usd(targets.get("portfolio_usd_day")))
 with c3:
-    st.metric("Positions", str(targets.get("num_positions", 0)))
+    st.metric("Positions", str(num_positions))
 
 from engine.scanner import is_nyse_trading_hours
 if is_nyse_trading_hours():
-    st.success("NYSE OPEN — equity trades can execute now")
+    st.success("NYSE OPEN \u2014 equity trades can execute now")
 else:
-    st.info("NYSE CLOSED — equity trades pending until next open")
+    st.info("NYSE CLOSED \u2014 equity trades pending until next open")
 
 st.divider()
 
@@ -124,7 +254,7 @@ if positions:
         })
     st.dataframe(rows, use_container_width=True, hide_index=True)
 else:
-    st.info("No positions — waiting for worker...")
+    st.info("No positions \u2014 waiting for worker...")
 
 st.divider()
 
@@ -192,16 +322,7 @@ with st.expander("Position Caps"):
 
 with st.expander(f"Rejected Markets ({len(rejected)})"):
     if rejected:
-        rej_rows = []
-        for r in rejected:
-            rej_rows.append({
-                "Ticker": r["ticker"],
-                "Reason": r["reason"],
-                "Forecast APR": fmt_pct(r.get("forecast_apr")),
-                "Score": fmt_pct(r.get("score")),
-                "Cap $": fmt_usd(r.get("cap_final")),
-            })
-        st.dataframe(rej_rows, use_container_width=True, hide_index=True)
+        _render_rejected_table(rejected, deep_scan_cohort)
     else:
         st.info("No rejected markets")
 
@@ -390,7 +511,7 @@ with st.expander("Insurance Manager"):
 | Coinbase USDC | **Custody Cover** |
 | Hyperliquid collateral | **Protocol Cover** |
 """)
-    st.info("Nexus Mutual cover is **discretionary** — members have final say on claims.")
+    st.info("Nexus Mutual cover is **discretionary** \u2014 members have final say on claims.")
 
     covers = db.get_insurance_covers()
     if covers:
@@ -400,12 +521,12 @@ with st.expander("Insurance Manager"):
             try:
                 exp = datetime.fromisoformat(expiry).date()
                 d = (exp - datetime.now(timezone.utc).date()).days
-                days_left = f" — **EXPIRED**" if d < 0 else f" — {d}d left"
+                days_left = f" \u2014 **EXPIRED**" if d < 0 else f" \u2014 {d}d left"
             except (ValueError, TypeError):
                 pass
             c1, c2 = st.columns([4, 1])
             with c1:
-                st.write(f"{cover['cover_type']} — {fmt_usd(cover['amount'])} (exp {expiry[:10]}){days_left}")
+                st.write(f"{cover['cover_type']} \u2014 {fmt_usd(cover['amount'])} (exp {expiry[:10]}){days_left}")
             with c2:
                 if st.button("Remove", key=f"del_{cover['id']}"):
                     db.delete_insurance_cover(cover["id"])

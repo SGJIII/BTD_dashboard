@@ -64,10 +64,13 @@ def build_portfolio(candidates: list, budget: float) -> Portfolio:
         5. Skip if alloc < min_ticket
         6. Accumulate until MAX_NAMES or budget exhausted
     """
-    emergency = max(config.EMERGENCY_FLOOR, config.EMERGENCY_PCT * budget)
-    deployable = budget - emergency - config.OPS_RESERVE
-    h_max = deployable / (1 + config.COLLATERAL_FRACTION)
-    min_ticket = max(config.MIN_TICKET_USD, config.MIN_TICKET_BUDGET_PCT * budget)
+    buckets = config.compute_budget_buckets(budget)
+    emergency = buckets["emergency"]
+    deployable = buckets["deployable"]
+    h_max = buckets["h_max"]
+    min_ticket = buckets["min_ticket"]
+    ops_reserve = buckets["ops_reserve"]
+    budget = buckets["budget"]
 
     if h_max < min_ticket:
         return _empty_portfolio(budget, emergency, deployable, h_max)
@@ -122,7 +125,7 @@ def build_portfolio(candidates: list, budget: float) -> Portfolio:
 
     perp_collateral = config.COLLATERAL_FRACTION * h_total
     coinbase_treasury = deployable - h_total - perp_collateral
-    coinbase_total = emergency + config.OPS_RESERVE + coinbase_treasury
+    coinbase_total = emergency + ops_reserve + coinbase_treasury
 
     # Portfolio net APR: weighted average of position net APRs
     # + Coinbase yield on treasury + emergency

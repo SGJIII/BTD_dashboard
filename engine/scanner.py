@@ -19,6 +19,7 @@ log = logging.getLogger(__name__)
 
 # Max markets to deep-scan (fetch L2 book + funding history)
 MAX_DEEP_SCAN = 15
+MAX_DEEP_SCAN_HARD = 25
 
 
 @dataclass
@@ -48,6 +49,7 @@ class ScanResult:
     candidates: list[Candidate]
     rejected: list[dict]
     is_trading_hours: bool
+    deep_scan_cohort: int = 0
 
 
 # ── NYSE Trading Hours ──────────────────────────────────────────────────────
@@ -244,9 +246,8 @@ def build_candidates(markets: list[dict], budget: float) -> ScanResult:
     weekend = is_weekend_et()
 
     # Estimate initial per-asset allocation for impact calc
-    emergency = max(config.EMERGENCY_FLOOR, config.EMERGENCY_PCT * budget)
-    deployable = budget - emergency - config.OPS_RESERVE
-    h_max = deployable / (1 + config.COLLATERAL_FRACTION)
+    buckets = config.compute_budget_buckets(budget)
+    h_max = buckets["h_max"]
     est_alloc = h_max / config.MAX_NAMES
 
     # ── Phase 1: Fast pre-filter (no API calls) ────────────────────────────
@@ -255,13 +256,16 @@ def build_candidates(markets: list[dict], budget: float) -> ScanResult:
         coin = m["coin"]
         ticker = m["ticker"]
 
+        inst_funding_apr = round((m.get("funding_apr") or 0) * 100, 2)  # as %
+
         # Hedge mapping check
         hedge_symbol = config.HEDGE_MAP.get(coin)
         if not hedge_symbol:
             rejected.append({
                 "coin": coin, "ticker": ticker,
                 "reason": "no hedge mapping",
-                "forecast_apr": None, "score": None, "cap_final": None,
+                "instant_apr": inst_funding_apr,
+                "forecast_apr": None, "score": None, "cap_final": None, "pre_rank": None,
             })
             continue
 
@@ -280,33 +284,53 @@ def build_candidates(markets: list[dict], budget: float) -> ScanResult:
             rejected.append({
                 "coin": coin, "ticker": ticker,
                 "reason": f"maxLeverage {max_lev} < {config.MIN_MAX_LEVERAGE}",
-                "forecast_apr": None, "score": None, "cap_final": None,
+                "instant_apr": inst_funding_apr,
+                "forecast_apr": None, "score": None, "cap_final": None, "pre_rank": None,
             })
             continue
 
         # Skip negative/zero instantaneous funding (no point deep scanning)
-        inst_funding = m.get("funding_apr") or 0
-        if inst_funding <= 0:
+        if (m.get("funding_apr") or 0) <= 0:
             rejected.append({
                 "coin": coin, "ticker": ticker,
                 "reason": "negative/zero instantaneous funding",
-                "forecast_apr": round(inst_funding * 100, 2), "score": None, "cap_final": None,
+                "instant_apr": inst_funding_apr,
+                "forecast_apr": None, "score": None, "cap_final": None, "pre_rank": None,
             })
             continue
 
         pre_filtered.append((m, hedge_symbol))
 
-    # Sort by instantaneous funding APR descending, take top N for deep scan
-    pre_filtered.sort(key=lambda x: x[0].get("funding_apr") or 0, reverse=True)
-    deep_scan_set = pre_filtered[:MAX_DEEP_SCAN]
-    skipped = pre_filtered[MAX_DEEP_SCAN:]
+    # Sort by instantaneous funding APR descending (with liquidity tie-breakers).
+    pre_filtered.sort(
+        key=lambda x: (
+            x[0].get("funding_apr") or 0,
+            x[0].get("volume_24h") or 0,
+            x[0].get("oi_usd") or 0,
+        ),
+        reverse=True,
+    )
 
-    for m, hedge_symbol in skipped:
+    deep_scan_set = pre_filtered[:MAX_DEEP_SCAN]
+    if len(pre_filtered) > MAX_DEEP_SCAN:
+        cutoff = pre_filtered[MAX_DEEP_SCAN - 1][0].get("funding_apr") or 0
+        for m, hedge_symbol in pre_filtered[MAX_DEEP_SCAN:]:
+            if len(deep_scan_set) >= MAX_DEEP_SCAN_HARD:
+                break
+            if (m.get("funding_apr") or 0) < cutoff:
+                break
+            deep_scan_set.append((m, hedge_symbol))
+    skipped = pre_filtered[len(deep_scan_set):]
+
+    # Assign pre-filter rank to skipped items
+    for idx, (m, hedge_symbol) in enumerate(skipped):
+        pre_rank = len(deep_scan_set) + idx + 1
         rejected.append({
             "coin": m["coin"], "ticker": m["ticker"],
-            "reason": f"outside top {MAX_DEEP_SCAN} by funding",
-            "forecast_apr": round((m.get("funding_apr") or 0) * 100, 2),
-            "score": None, "cap_final": None,
+            "reason": f"outside top funding cohort (scanned {len(deep_scan_set)})",
+            "instant_apr": round((m.get("funding_apr") or 0) * 100, 2),
+            "forecast_apr": None,
+            "score": None, "cap_final": None, "pre_rank": pre_rank,
         })
 
     log.info("Pre-filter: %d passed, %d rejected, deep-scanning top %d",
@@ -321,15 +345,18 @@ def build_candidates(markets: list[dict], budget: float) -> ScanResult:
             pass
 
     # ── Phase 2: Deep scan (API calls per market) ──────────────────────────
-    for m, hedge_symbol in deep_scan_set:
+    for ds_idx, (m, hedge_symbol) in enumerate(deep_scan_set):
         coin = m["coin"]
         ticker = m["ticker"]
+        ds_rank = ds_idx + 1  # 1-based rank within deep-scan cohort
+        inst_apr = round((m.get("funding_apr") or 0) * 100, 2)
 
         # NASDAQ check (uses cached data after first call)
         if not is_public_equity(hedge_symbol):
             rejected.append({
                 "coin": coin, "ticker": ticker,
                 "reason": f"hedge {hedge_symbol} not in public directories",
+                "instant_apr": inst_apr, "pre_rank": ds_rank,
                 "forecast_apr": None, "score": None, "cap_final": None,
             })
             continue
@@ -356,6 +383,7 @@ def build_candidates(markets: list[dict], budget: float) -> ScanResult:
                 rejected.append({
                     "coin": coin, "ticker": ticker,
                     "reason": "no funding history",
+                    "instant_apr": inst_apr, "pre_rank": ds_rank,
                     "forecast_apr": None, "score": None, "cap_final": None,
                 })
                 continue
@@ -380,6 +408,7 @@ def build_candidates(markets: list[dict], budget: float) -> ScanResult:
             rejected.append({
                 "coin": coin, "ticker": ticker,
                 "reason": f"funding data error: {e}",
+                "instant_apr": inst_apr, "pre_rank": ds_rank,
                 "forecast_apr": None, "score": None, "cap_final": None,
             })
             continue
@@ -399,6 +428,7 @@ def build_candidates(markets: list[dict], budget: float) -> ScanResult:
             rejected.append({
                 "coin": coin, "ticker": ticker,
                 "reason": "negative funding forecast",
+                "instant_apr": inst_apr, "pre_rank": ds_rank,
                 "forecast_apr": round(forecast, 2), "score": round(score, 2),
                 "cap_final": round(preliminary_cap, 2),
             })
@@ -431,4 +461,5 @@ def build_candidates(markets: list[dict], budget: float) -> ScanResult:
         candidates=candidates,
         rejected=rejected,
         is_trading_hours=is_nyse_trading_hours(),
+        deep_scan_cohort=len(deep_scan_set),
     )

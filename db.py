@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 import threading
 from contextlib import contextmanager
@@ -48,8 +49,6 @@ def init_db():
 
 # ── Migrations ─────────────────────────────────────────────────────────────
 
-# Each migration is (table, column, column_def).
-# Applied idempotently: skipped if column already exists.
 _MIGRATIONS: list[tuple[str, str, str]] = [
     ("portfolio_targets", "run_status", "TEXT"),
     ("portfolio_targets", "deep_scan_cohort", "INTEGER DEFAULT 0"),
@@ -65,7 +64,7 @@ def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
 
 
 def _run_migrations():
-    """Apply pending ALTER TABLE ADD COLUMN migrations."""
+    """Apply pending ALTER TABLE ADD COLUMN migrations (idempotent)."""
     with get_db() as conn:
         cache: dict[str, set[str]] = {}
         applied = 0
