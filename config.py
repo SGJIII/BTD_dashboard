@@ -52,6 +52,9 @@ DEFAULT_INSURANCE_BUDGET_PCT = 1.50 # percent of budget
 HL_TRADFI_DEX = "xyz"
 HL_INFO_URL = "https://api.hyperliquid.xyz/info"
 
+# ── Stock-Only Mode ──────────────────────────────────────────────────────────
+STOCK_ONLY_MODE = True                # when True, only equity perps are eligible
+
 # ── Hedge Mapping ─────────────────────────────────────────────────────────────
 # xyz coin → equity/ETF hedge symbol for delta-neutral pairing.
 # Only coins with a mapping can receive allocation.
@@ -72,6 +75,13 @@ HEDGE_MAP = {
     "xyz:URANIUM": "URA", "xyz:NATGAS": "UNG", "xyz:CL": "USO",
     # Index → ETF proxies
     "xyz:XYZ100": "SPY",
+}
+
+# Non-stock coins — excluded when STOCK_ONLY_MODE is True.
+# These map to commodity ETFs or index ETFs, not individual equities.
+NON_STOCK_COINS: set[str] = {
+    "xyz:GOLD", "xyz:SILVER", "xyz:COPPER", "xyz:PLATINUM", "xyz:PALLADIUM",
+    "xyz:URANIUM", "xyz:NATGAS", "xyz:CL", "xyz:XYZ100",
 }
 
 # ── NASDAQ Symbol Directories ─────────────────────────────────────────────────
