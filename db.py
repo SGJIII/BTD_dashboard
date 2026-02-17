@@ -7,7 +7,11 @@ import threading
 from contextlib import contextmanager
 from datetime import datetime, timezone
 
+import logging
+
 import config
+
+log = logging.getLogger(__name__)
 
 _local = threading.local()
 
@@ -36,9 +40,47 @@ def get_db():
 
 
 def init_db():
-    """Create all tables if they don't exist."""
+    """Create all tables if they don't exist, then apply migrations."""
     with get_db() as conn:
         conn.executescript(_SCHEMA)
+    _run_migrations()
+
+
+# ── Migrations ─────────────────────────────────────────────────────────────
+
+# Each migration is (table, column, column_def).
+# Applied idempotently: skipped if column already exists.
+_MIGRATIONS: list[tuple[str, str, str]] = [
+    ("portfolio_targets", "run_status", "TEXT"),
+    ("portfolio_targets", "deep_scan_cohort", "INTEGER DEFAULT 0"),
+    ("rejected_markets", "instant_apr", "REAL"),
+    ("rejected_markets", "pre_rank", "INTEGER"),
+]
+
+
+def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
+    """Return the set of column names for a table."""
+    rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+    return {r[1] if isinstance(r, tuple) else r["name"] for r in rows}
+
+
+def _run_migrations():
+    """Apply pending ALTER TABLE ADD COLUMN migrations."""
+    with get_db() as conn:
+        cache: dict[str, set[str]] = {}
+        applied = 0
+        for table, column, col_def in _MIGRATIONS:
+            if table not in cache:
+                cache[table] = _table_columns(conn, table)
+            if column in cache[table]:
+                continue
+            stmt = f"ALTER TABLE {table} ADD COLUMN {column} {col_def}"
+            conn.execute(stmt)
+            cache[table].add(column)
+            applied += 1
+            log.info("Migration: %s", stmt)
+        if applied:
+            log.info("Applied %d migration(s)", applied)
 
 
 def _now() -> str:
@@ -105,6 +147,8 @@ CREATE TABLE IF NOT EXISTS portfolio_targets (
     portfolio_net_apr     REAL DEFAULT 0,
     portfolio_usd_day     REAL DEFAULT 0,
     health_status         TEXT DEFAULT 'ACTION',
+    run_status            TEXT,
+    deep_scan_cohort      INTEGER DEFAULT 0,
     updated_at            TEXT
 );
 
@@ -138,9 +182,11 @@ CREATE TABLE IF NOT EXISTS rejected_markets (
     coin          TEXT PRIMARY KEY,
     ticker        TEXT NOT NULL,
     reason        TEXT NOT NULL,
+    instant_apr   REAL,
     forecast_apr  REAL,
     score         REAL,
     cap_final     REAL,
+    pre_rank      INTEGER,
     updated_at    TEXT
 );
 
