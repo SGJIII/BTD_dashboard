@@ -1,6 +1,7 @@
 """Arbiter Dashboard v2 — all constants, defaults, and configuration."""
 
 import os
+from typing import TypedDict
 
 # ── Single User Input ─────────────────────────────────────────────────────────
 DEFAULT_BUDGET = 640_000
@@ -114,3 +115,36 @@ FUNDING_APPROACH_APR_POINTS = 10.0
 # ── Pushover (env var override) ───────────────────────────────────────────────
 PUSHOVER_APP_TOKEN = os.environ.get("PUSHOVER_APP_TOKEN", "")
 PUSHOVER_USER_KEY = os.environ.get("PUSHOVER_USER_KEY", "")
+
+
+class BudgetBuckets(TypedDict):
+    budget: float
+    emergency: float
+    ops_reserve: float
+    deployable: float
+    h_max: float
+    min_ticket: float
+
+
+def compute_budget_buckets(budget: float) -> BudgetBuckets:
+    """Compute budget-derived portfolio buckets with safe lower bounds."""
+    b = max(float(budget or 0), 0.0)
+
+    emergency_target = max(EMERGENCY_FLOOR, EMERGENCY_PCT * b)
+    emergency = min(b, emergency_target)
+
+    remaining = max(0.0, b - emergency)
+    ops_reserve = min(OPS_RESERVE, remaining)
+    deployable = remaining - ops_reserve
+
+    h_max = deployable / (1 + COLLATERAL_FRACTION) if COLLATERAL_FRACTION > 0 else 0.0
+    min_ticket = max(MIN_TICKET_USD, MIN_TICKET_BUDGET_PCT * b)
+
+    return {
+        "budget": b,
+        "emergency": emergency,
+        "ops_reserve": ops_reserve,
+        "deployable": deployable,
+        "h_max": h_max,
+        "min_ticket": min_ticket,
+    }

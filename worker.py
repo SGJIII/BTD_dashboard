@@ -96,10 +96,20 @@ def market_refresh_job():
             db.upsert_rejected_market(rej["coin"], {
                 "ticker": rej["ticker"],
                 "reason": rej["reason"],
+                "instant_apr": rej.get("instant_apr"),
                 "forecast_apr": rej.get("forecast_apr"),
                 "score": rej.get("score"),
                 "cap_final": rej.get("cap_final"),
+                "pre_rank": rej.get("pre_rank"),
             })
+
+        # Determine run status
+        if portfolio.num_positions > 0:
+            run_status = "success"
+        elif scan_result.candidates:
+            run_status = "partial"  # candidates found but none allocated
+        else:
+            run_status = "no_candidates"
 
         # Save portfolio-level aggregates
         db.update_portfolio_targets(
@@ -112,6 +122,8 @@ def market_refresh_job():
             portfolio_net_apr=portfolio.portfolio_net_apr,
             portfolio_usd_day=portfolio.portfolio_usd_day,
             health_status="OPTIMIZED" if portfolio.num_positions > 0 else "ACTION",
+            run_status=run_status,
+            deep_scan_cohort=scan_result.deep_scan_cohort,
         )
 
         # Log top positions
