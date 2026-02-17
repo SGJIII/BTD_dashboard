@@ -9,7 +9,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 
 import config
 import db
-from engine import allocator, hyperliquid, scanner
+from engine import alerts, allocator, hyperliquid, scanner
 
 logging.basicConfig(
     level=logging.INFO,
@@ -123,8 +123,58 @@ def market_refresh_job():
                 pos.forecast_apr, pos.net_apr, pos.binding_cap,
             )
 
+        # ── Alert evaluation ──────────────────────────────────────────────
+        _evaluate_alerts(scan_result, portfolio)
+
     except Exception:
         log.exception("Market refresh job failed")
+        alerts.send_critical_alert("SYSTEM", "Market refresh job failed — check logs")
+
+
+def _evaluate_alerts(scan_result: scanner.ScanResult, portfolio):
+    """Emit alerts based on scan results and portfolio state."""
+    try:
+        positions = portfolio.positions
+        candidates = scan_result.candidates
+        is_trading = scan_result.is_trading_hours
+
+        if not positions:
+            return
+
+        # Worst position in current portfolio (lowest score)
+        worst_pos = min(positions, key=lambda p: p.score)
+        portfolio_coins = {p.coin for p in positions}
+
+        # Best candidate NOT already in portfolio
+        outside_candidates = [c for c in candidates if c.coin not in portfolio_coins]
+        if not outside_candidates:
+            return
+
+        best_outside = outside_candidates[0]  # already sorted by score desc
+
+        advantage = best_outside.score - worst_pos.score
+
+        # OPPORTUNITY: advantage exceeds hurdle
+        if advantage >= config.FUNDING_HURDLE_APR_POINTS:
+            timing_hint = "Execute now" if is_trading else "Execute at next NYSE open"
+            alerts.send_opportunity_alert(
+                best_outside.ticker, worst_pos.ticker,
+                best_outside.score, worst_pos.score,
+                is_trading,
+            )
+
+        # INFO: approaching hurdle
+        elif advantage >= config.FUNDING_APPROACH_APR_POINTS:
+            alerts.send_info_alert(
+                best_outside.ticker, worst_pos.ticker,
+                best_outside.score, worst_pos.score,
+            )
+
+        # Check insurance expiry
+        alerts.check_insurance_expiry_alerts()
+
+    except Exception:
+        log.exception("Alert evaluation failed")
 
 
 def scanner_job():
@@ -167,6 +217,7 @@ def scanner_job():
 
     except Exception:
         log.exception("Scanner job failed")
+        alerts.send_critical_alert("SYSTEM", "Scanner job failed — check logs")
 
 
 def main():
