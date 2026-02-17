@@ -9,7 +9,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 
 import config
 import db
-from engine import alerts, allocator, hyperliquid, scanner
+from engine import alerts, allocator, hyperliquid, rebalance, scanner
 
 logging.basicConfig(
     level=logging.INFO,
@@ -64,6 +64,25 @@ def market_refresh_job():
             portfolio.portfolio_net_apr,
             portfolio.portfolio_usd_day,
         )
+
+        # Evaluate rebalance: compare new portfolio vs current (before overwriting)
+        old_positions = db.get_portfolio_positions()
+        new_positions_dicts = [
+            {"coin": p.coin, "ticker": p.ticker, "alloc_notional": p.alloc_notional,
+             "net_apr": p.net_apr, "score": p.score}
+            for p in portfolio.positions
+        ]
+        decision = rebalance.evaluate_rebalance(old_positions, new_positions_dicts, budget)
+        db.update_rebalance_decision(
+            recommendation=decision.recommendation,
+            expected_gain_usd=decision.expected_gain_usd,
+            estimated_cost_usd=decision.estimated_cost_usd,
+            threshold_usd=decision.threshold_usd,
+            rationale=decision.rationale,
+        )
+        log.info("Rebalance: %s (gain=$%.0f, cost=$%.0f, threshold=$%.0f)",
+                 decision.recommendation, decision.expected_gain_usd,
+                 decision.estimated_cost_usd, decision.threshold_usd)
 
         # Save portfolio positions to DB
         db.clear_portfolio_positions()

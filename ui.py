@@ -232,6 +232,23 @@ if is_nyse_trading_hours():
 else:
     st.info("NYSE CLOSED \u2014 equity trades pending until next open")
 
+# ── Rebalance Recommendation ──────────────────────────────────────────────
+
+rebal = db.get_rebalance_decision()
+if rebal.get("recommendation"):
+    rec = rebal["recommendation"]
+    if rec == "SWITCH":
+        st.warning(f"**SWITCH recommended** — {rebal.get('rationale', '')}")
+    else:
+        st.success(f"**HOLD** — {rebal.get('rationale', '')}")
+    rc1, rc2, rc3 = st.columns(3)
+    with rc1:
+        st.metric("Expected Gain", fmt_usd(rebal.get("expected_gain_usd")))
+    with rc2:
+        st.metric("Switching Cost", fmt_usd(rebal.get("estimated_cost_usd")))
+    with rc3:
+        st.metric("Threshold", fmt_usd(rebal.get("threshold_usd")))
+
 st.divider()
 
 # ── Portfolio Positions Table ───────────────────────────────────────────────
