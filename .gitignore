@@ -1,0 +1,10 @@
+data/*.sqlite
+data/*.sqlite-wal
+data/*.sqlite-shm
+__pycache__/
+*.pyc
+.env
+*.egg-info/
+dist/
+build/
+.streamlit/
