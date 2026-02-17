@@ -105,6 +105,11 @@ NYSE_OPEN_MINUTE = 30
 NYSE_CLOSE_HOUR = 16
 NYSE_CLOSE_MINUTE = 0
 
+# ── Rebalance Decision ───────────────────────────────────────────────────────
+REBALANCE_HORIZON_DAYS = 7            # expected gain horizon
+REBALANCE_COST_MULTIPLIER = 1.5       # switch only if gain > 1.5× cost
+REBALANCE_FRICTION_BPS = 5            # additional friction buffer (bps)
+
 # ── Alert Deduplication ───────────────────────────────────────────────────────
 OPPORTUNITY_DEDUP_HOURS = 6
 OPPORTUNITY_REFIRE_APR_INCREASE = 10.0
