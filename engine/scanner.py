@@ -265,6 +265,15 @@ def build_candidates(markets: list[dict], budget: float) -> ScanResult:
             })
             continue
 
+        # Stock-only filter
+        if config.STOCK_ONLY_MODE and coin in config.NON_STOCK_COINS:
+            rejected.append({
+                "coin": coin, "ticker": ticker,
+                "reason": "non-stock market excluded",
+                "forecast_apr": None, "score": None, "cap_final": None,
+            })
+            continue
+
         # Hard gate: maxLeverage >= 10
         max_lev = m.get("max_leverage") or 0
         if max_lev < config.MIN_MAX_LEVERAGE:
