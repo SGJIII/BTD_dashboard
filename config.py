@@ -109,6 +109,7 @@ NYSE_CLOSE_MINUTE = 0
 REBALANCE_HORIZON_DAYS = 7            # expected gain horizon
 REBALANCE_COST_MULTIPLIER = 1.5       # switch only if gain > 1.5× cost
 REBALANCE_FRICTION_BPS = 5            # additional friction buffer (bps)
+REBALANCE_MIN_GAIN_USD = 1.0          # ignore gains below $1 (noise floor)
 
 # ── Alert Deduplication ───────────────────────────────────────────────────────
 OPPORTUNITY_DEDUP_HOURS = 6

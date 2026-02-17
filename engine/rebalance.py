@@ -110,7 +110,7 @@ def evaluate_rebalance(
             "action": "ADD" if old_alloc == 0 else "REMOVE" if new_alloc == 0 else ("INCREASE" if delta > 0 else "DECREASE"),
         })
 
-    if gain >= threshold:
+    if gain > config.REBALANCE_MIN_GAIN_USD and gain >= threshold:
         recommendation = "SWITCH"
         rationale = (
             f"Expected {config.REBALANCE_HORIZON_DAYS}d gain (${gain:,.0f}) "
