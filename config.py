@@ -15,8 +15,9 @@ OPS_RESERVE = 5_000                 # kept inside Coinbase bucket
 # ── Multi-Asset Portfolio Limits ──────────────────────────────────────────────
 MAX_NAMES = 6
 MAX_CONCENTRATION = 0.50            # no single asset > 50% of H_max
-MIN_TICKET_USD = 15_000
-MIN_TICKET_BUDGET_PCT = 0.02        # or 2% of budget, whichever larger
+MIN_TICKET_USD = 15_000             # DEPRECATED: kept for backward compat
+MIN_TICKET_BUDGET_PCT = 0.02        # DEPRECATED: kept for backward compat
+ALLOCATION_DUST_USD = 100           # skip allocations below this (noise floor)
 
 # ── Soft Caps ─────────────────────────────────────────────────────────────────
 OI_CAP_FRACTION = 0.05              # 5% of OI_USD
@@ -144,7 +145,7 @@ def compute_budget_buckets(budget: float) -> BudgetBuckets:
     deployable = remaining - ops_reserve
 
     h_max = deployable / (1 + COLLATERAL_FRACTION) if COLLATERAL_FRACTION > 0 else 0.0
-    min_ticket = max(MIN_TICKET_USD, MIN_TICKET_BUDGET_PCT * b)
+    min_ticket = float(ALLOCATION_DUST_USD)  # waterfall: no hard floor, only dust
 
     return {
         "budget": b,

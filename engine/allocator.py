@@ -56,23 +56,23 @@ def build_portfolio(candidates: list, budget: float) -> Portfolio:
         candidates: list of scanner.Candidate objects, pre-sorted by score desc
         budget: total capital (USD)
 
-    Algorithm:
-        1. Compute emergency, deployable, H_max, min_ticket
+    Algorithm (waterfall):
+        1. Compute emergency, deployable, H_max
         2. Iterate candidates in score order
         3. For each: cap_final = min(cap_oi, cap_vol, cap_impact, cap_conc)
         4. alloc = min(cap_final, remaining)
-        5. Skip if alloc < min_ticket
-        6. Accumulate until MAX_NAMES or budget exhausted
+        5. Skip if alloc < ALLOCATION_DUST_USD ($100)
+        6. Continue until MAX_NAMES or budget exhausted
     """
     buckets = config.compute_budget_buckets(budget)
     emergency = buckets["emergency"]
     deployable = buckets["deployable"]
     h_max = buckets["h_max"]
-    min_ticket = buckets["min_ticket"]
+    dust = buckets["min_ticket"]  # ALLOCATION_DUST_USD — noise floor only
     ops_reserve = buckets["ops_reserve"]
     budget = buckets["budget"]
 
-    if h_max < min_ticket:
+    if h_max <= 0:
         return _empty_portfolio(budget, emergency, deployable, h_max)
 
     remaining = h_max
@@ -81,14 +81,14 @@ def build_portfolio(candidates: list, budget: float) -> Portfolio:
     for cand in candidates:
         if len(positions) >= config.MAX_NAMES:
             break
-        if remaining < min_ticket:
+        if remaining <= dust:
             break
 
         cap_conc = config.MAX_CONCENTRATION * h_max
         cap_final = min(cand.cap_oi, cand.cap_vol, cand.cap_impact, cap_conc)
         alloc = min(cap_final, remaining)
 
-        if alloc < min_ticket:
+        if alloc < dust:
             continue
 
         # Determine which cap was binding
