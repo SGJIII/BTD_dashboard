@@ -143,6 +143,8 @@ def market_refresh_job():
             health_status="OPTIMIZED" if portfolio.num_positions > 0 else "ACTION",
             run_status=run_status,
             deep_scan_cohort=scan_result.deep_scan_cohort,
+            prefiltered_count=scan_result.prefiltered_count,
+            projection_coverage=scan_result.projection_coverage,
         )
 
         # Log top positions

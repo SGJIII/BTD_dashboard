@@ -52,6 +52,8 @@ def init_db():
 _MIGRATIONS: list[tuple[str, str, str]] = [
     ("portfolio_targets", "run_status", "TEXT"),
     ("portfolio_targets", "deep_scan_cohort", "INTEGER DEFAULT 0"),
+    ("portfolio_targets", "projection_coverage", "REAL DEFAULT 0"),
+    ("portfolio_targets", "prefiltered_count", "INTEGER DEFAULT 0"),
     ("rejected_markets", "instant_apr", "REAL"),
     ("rejected_markets", "pre_rank", "INTEGER"),
 ]
