@@ -253,7 +253,7 @@ def build_candidates(markets: list[dict], budget: float) -> ScanResult:
     # ── Phase 1: Fast pre-filter (no API calls) ────────────────────────────
     pre_filtered = []
     for m in markets:
-        coin = m["coin"]
+        coin = config.normalize_coin(m["coin"])
         ticker = m["ticker"]
 
         inst_funding_apr = round((m.get("funding_apr") or 0) * 100, 2)  # as %
@@ -263,7 +263,7 @@ def build_candidates(markets: list[dict], budget: float) -> ScanResult:
         if not hedge_symbol:
             rejected.append({
                 "coin": coin, "ticker": ticker,
-                "reason": "no hedge mapping",
+                "reason": "missing_hedge_mapping",
                 "instant_apr": inst_funding_apr,
                 "forecast_apr": None, "score": None, "cap_final": None, "pre_rank": None,
             })
@@ -273,7 +273,7 @@ def build_candidates(markets: list[dict], budget: float) -> ScanResult:
         if config.STOCK_ONLY_MODE and coin in config.NON_STOCK_COINS:
             rejected.append({
                 "coin": coin, "ticker": ticker,
-                "reason": "non-stock market excluded",
+                "reason": "non_stock_market_excluded",
                 "forecast_apr": None, "score": None, "cap_final": None,
             })
             continue
@@ -355,7 +355,8 @@ def build_candidates(markets: list[dict], budget: float) -> ScanResult:
         if not is_public_equity(hedge_symbol):
             rejected.append({
                 "coin": coin, "ticker": ticker,
-                "reason": f"hedge {hedge_symbol} not in public directories",
+                "reason": "not_in_public_directories",
+                "hedge_symbol": hedge_symbol,
                 "instant_apr": inst_apr, "pre_rank": ds_rank,
                 "forecast_apr": None, "score": None, "cap_final": None,
             })

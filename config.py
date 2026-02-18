@@ -68,8 +68,8 @@ HEDGE_MAP = {
     "xyz:LLY": "LLY", "xyz:META": "META", "xyz:MSFT": "MSFT",
     "xyz:MSTR": "MSTR", "xyz:MU": "MU", "xyz:NFLX": "NFLX",
     "xyz:NVDA": "NVDA", "xyz:ORCL": "ORCL", "xyz:PLTR": "PLTR",
-    "xyz:RIVN": "RIVN", "xyz:TSLA": "TSLA", "xyz:TSM": "TSM",
-    "xyz:URNM": "URNM",
+    "xyz:RIVN": "RIVN", "xyz:SNDK": "SNDK",
+    "xyz:TSLA": "TSLA", "xyz:TSM": "TSM", "xyz:URNM": "URNM",
     # Commodity → ETF proxies
     "xyz:GOLD": "GLD", "xyz:SILVER": "SLV", "xyz:COPPER": "CPER",
     "xyz:PLATINUM": "PPLT", "xyz:PALLADIUM": "PALL",
@@ -154,3 +154,15 @@ def compute_budget_buckets(budget: float) -> BudgetBuckets:
         "h_max": h_max,
         "min_ticket": min_ticket,
     }
+
+
+def normalize_coin(coin: str) -> str:
+    """Normalize a coin identifier: trim whitespace, uppercase the symbol part.
+
+    'xyz:sndk' -> 'xyz:SNDK', ' xyz:TSLA ' -> 'xyz:TSLA'
+    """
+    coin = coin.strip()
+    if ":" in coin:
+        prefix, symbol = coin.split(":", 1)
+        return f"{prefix.strip().lower()}:{symbol.strip().upper()}"
+    return coin.upper()
