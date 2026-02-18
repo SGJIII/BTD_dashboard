@@ -60,6 +60,8 @@ _REASON_LABELS = {
     "negative funding forecast": "Negative forecast",
     "negative/zero instantaneous funding": "Negative funding",
     "no funding history": "No funding data",
+    "no_l2_orderbook": "No L2 orderbook",
+    "insufficient_orderbook_depth": "Insufficient book depth",
 }
 
 
@@ -190,7 +192,15 @@ if num_positions == 0:
         insufficient = reason_counts.get("insufficient_history", [])
         missing_map = reason_counts.get("missing_hedge_mapping", [])
         non_stock = reason_counts.get("non_stock_market_excluded", [])
+        no_l2 = reason_counts.get("no_l2_orderbook", [])
+        insuf_depth = reason_counts.get("insufficient_orderbook_depth", [])
 
+        l2_total = len(no_l2) + len(insuf_depth)
+        if l2_total:
+            reasons.append(
+                f"**{l2_total} market(s)** rejected: L2 orderbook missing or "
+                f"insufficient depth for slippage scoring."
+            )
         if nasdaq_fails:
             reasons.append(
                 f"**{len(nasdaq_fails)} market(s)** rejected: hedge symbol not found in "

@@ -366,14 +366,31 @@ def build_candidates(markets: list[dict], budget: float) -> ScanResult:
         cap_oi = config.OI_CAP_FRACTION * oi_usd
         cap_vol = config.VOLUME_CAP_FRACTION * volume_24h
 
-        # Fetch L2 book for impact cap
+        # Fetch L2 book for impact cap — fail closed on missing data
+        l2_failed = False
+        book = {"bids": [], "asks": []}
+        cap_impact = 0.0
         try:
             book = hyperliquid.fetch_l2_book(coin)
-            cap_impact = hyperliquid.find_max_notional_for_impact(book, config.MAX_IMPACT_PCT)
+            if not book.get("bids") or not book.get("asks"):
+                l2_failed = True
+            else:
+                cap_impact = hyperliquid.find_max_notional_for_impact(book, config.MAX_IMPACT_PCT)
+                if cap_impact <= 0:
+                    l2_failed = True
         except Exception as e:
             log.warning("L2 book fetch failed for %s: %s", coin, e)
-            book = {"bids": [], "asks": []}
-            cap_impact = cap_oi  # fallback: use OI cap
+            l2_failed = True
+
+        if l2_failed:
+            rejected.append({
+                "coin": coin, "ticker": ticker,
+                "reason": "no_l2_orderbook",
+                "instant_apr": inst_apr, "pre_rank": ds_rank,
+                "forecast_apr": None, "score": None,
+                "cap_final": None,
+            })
+            continue
 
         # Fetch funding history → aggregate → dual EMA → forecast
         try:
@@ -432,7 +449,18 @@ def build_candidates(markets: list[dict], budget: float) -> ScanResult:
         try:
             impact_at_alloc = hyperliquid.compute_impact(book, est_position, side="sell")
         except Exception:
-            impact_at_alloc = 0.01  # 1% default
+            impact_at_alloc = 1.0  # will trigger rejection below
+
+        # Gate: only score when impact is finite and in [0, 1)
+        if not (0 <= impact_at_alloc < 1) or est_position <= 0:
+            rejected.append({
+                "coin": coin, "ticker": ticker,
+                "reason": "insufficient_orderbook_depth",
+                "instant_apr": inst_apr, "pre_rank": ds_rank,
+                "forecast_apr": round(forecast, 2), "score": None,
+                "cap_final": round(preliminary_cap, 2),
+            })
+            continue
 
         score, fee_drag, slip_drag = compute_score(forecast, impact_at_alloc)
 
