@@ -15,6 +15,8 @@ OPS_RESERVE = 5_000                 # kept inside Coinbase bucket
 # ── Multi-Asset Portfolio Limits ──────────────────────────────────────────────
 MAX_NAMES = 6
 MAX_CONCENTRATION = 0.50            # no single asset > 50% of H_max
+MAX_DEEP_SCAN = 30                  # PRD-aligned: project top N=30 before ranking
+MAX_DEEP_SCAN_HARD = 40             # tie-break buffer above MAX_DEEP_SCAN
 MIN_TICKET_USD = 15_000             # DEPRECATED: kept for backward compat
 MIN_TICKET_BUDGET_PCT = 0.02        # DEPRECATED: kept for backward compat
 ALLOCATION_DUST_USD = 100           # skip allocations below this (noise floor)
