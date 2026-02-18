@@ -50,6 +50,8 @@ class ScanResult:
     rejected: list[dict]
     is_trading_hours: bool
     deep_scan_cohort: int = 0
+    prefiltered_count: int = 0
+    projection_coverage: float = 0.0  # projected / prefiltered
 
 
 # ── NYSE Trading Hours ──────────────────────────────────────────────────────
@@ -312,6 +314,8 @@ def build_candidates(markets: list[dict], budget: float) -> ScanResult:
         pre_filtered.append((m, hedge_symbol))
 
     # Sort by instantaneous funding APR descending (with liquidity tie-breakers).
+    # Full-universe projection: deep-scan ALL pre-filtered markets (no cohort gate).
+    # Stock universe is small (~26 mapped equities), so this is practical.
     pre_filtered.sort(
         key=lambda x: (
             x[0].get("funding_apr") or 0,
@@ -321,29 +325,10 @@ def build_candidates(markets: list[dict], budget: float) -> ScanResult:
         reverse=True,
     )
 
-    deep_scan_set = pre_filtered[:MAX_DEEP_SCAN]
-    if len(pre_filtered) > MAX_DEEP_SCAN:
-        cutoff = pre_filtered[MAX_DEEP_SCAN - 1][0].get("funding_apr") or 0
-        for m, hedge_symbol in pre_filtered[MAX_DEEP_SCAN:]:
-            if len(deep_scan_set) >= MAX_DEEP_SCAN_HARD:
-                break
-            if (m.get("funding_apr") or 0) < cutoff:
-                break
-            deep_scan_set.append((m, hedge_symbol))
-    skipped = pre_filtered[len(deep_scan_set):]
+    deep_scan_set = pre_filtered  # project all pre-filtered markets
+    prefiltered_count = len(pre_filtered)
 
-    # Assign pre-filter rank to skipped items
-    for idx, (m, hedge_symbol) in enumerate(skipped):
-        pre_rank = len(deep_scan_set) + idx + 1
-        rejected.append({
-            "coin": m["coin"], "ticker": m["ticker"],
-            "reason": f"outside top funding cohort (scanned {len(deep_scan_set)})",
-            "instant_apr": round((m.get("funding_apr") or 0) * 100, 2),
-            "forecast_apr": None,
-            "score": None, "cap_final": None, "pre_rank": pre_rank,
-        })
-
-    log.info("Pre-filter: %d passed, %d rejected, deep-scanning top %d",
+    log.info("Pre-filter: %d passed, %d rejected, deep-scanning all %d",
              len(pre_filtered), len(rejected), len(deep_scan_set))
 
     # ── Phase 1.5: NASDAQ check (one fetch, cached for all) ────────────────
@@ -510,9 +495,22 @@ def build_candidates(markets: list[dict], budget: float) -> ScanResult:
     # Sort by score descending
     candidates.sort(key=lambda c: c.score, reverse=True)
 
+    # Projection coverage: what fraction of pre-filtered markets got projected
+    projected = len(candidates) + len([
+        r for r in rejected
+        if r.get("forecast_apr") is not None or r.get("reason") in (
+            "negative funding forecast", "insufficient_history",
+            "no funding history", "no_l2_orderbook",
+            "insufficient_orderbook_depth", "not_in_public_directories",
+        )
+    ])
+    coverage = projected / prefiltered_count if prefiltered_count > 0 else 0.0
+
     return ScanResult(
         candidates=candidates,
         rejected=rejected,
         is_trading_hours=is_nyse_trading_hours(),
         deep_scan_cohort=len(deep_scan_set),
+        prefiltered_count=prefiltered_count,
+        projection_coverage=round(coverage, 4),
     )

@@ -92,8 +92,8 @@ def _render_rejected_table(rejected_list: list[dict], cohort_size: int):
     st.dataframe(rej_rows, use_container_width=True, hide_index=True)
     if cohort_size > 0:
         st.caption(
-            f"Deep-scanned top {cohort_size} markets by instantaneous funding. "
-            f"Markets ranked below the cutoff were not deep-scanned (no forecast/score)."
+            f"Projected {cohort_size} pre-filtered markets. "
+            f"All eligible markets receive forecast and score computation."
         )
 
 
@@ -241,10 +241,13 @@ if num_positions == 0:
         for r in reasons:
             st.markdown(f"- {r}")
 
+        proj_coverage = targets.get("projection_coverage", 0)
+        prefiltered = targets.get("prefiltered_count", 0)
         st.caption(
             f"Budget: {fmt_usd(budget)} | H_max: {fmt_usd(h_max)} | "
             f"Dust threshold: {fmt_usd(config.ALLOCATION_DUST_USD)} | "
-            f"Deep-scanned: {deep_scan_cohort} markets"
+            f"Projected: {deep_scan_cohort}/{prefiltered} markets "
+            f"({proj_coverage:.0%} coverage)"
         )
 
     # Still show rejected table below for transparency
