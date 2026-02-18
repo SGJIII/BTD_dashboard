@@ -17,9 +17,9 @@ from engine import hyperliquid
 
 log = logging.getLogger(__name__)
 
-# Max markets to deep-scan (fetch L2 book + funding history)
-MAX_DEEP_SCAN = 15
-MAX_DEEP_SCAN_HARD = 25
+# Deep-scan limits from config (PRD §7.2: N=30 funding focus)
+MAX_DEEP_SCAN = config.MAX_DEEP_SCAN
+MAX_DEEP_SCAN_HARD = config.MAX_DEEP_SCAN_HARD
 
 
 @dataclass
