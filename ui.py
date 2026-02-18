@@ -46,22 +46,32 @@ def fmt_leverage(val) -> str:
 
 
 def _min_actionable_budget() -> float:
-    """Estimate the minimum budget that produces H_max >= min_ticket."""
-    b_low = (config.MIN_TICKET_USD * (1 + config.COLLATERAL_FRACTION)
-             + config.EMERGENCY_FLOOR + config.OPS_RESERVE)
-    b_high = config.MIN_TICKET_USD * (1 + config.COLLATERAL_FRACTION) / (
-        1 - config.EMERGENCY_PCT - config.MIN_TICKET_BUDGET_PCT * (1 + config.COLLATERAL_FRACTION)
-    ) + config.OPS_RESERVE
-    return max(b_low, b_high)
+    """Estimate the minimum budget that produces H_max > dust threshold."""
+    dust = config.ALLOCATION_DUST_USD
+    return (dust * (1 + config.COLLATERAL_FRACTION)
+            + config.EMERGENCY_FLOOR + config.OPS_RESERVE)
+
+
+_REASON_LABELS = {
+    "missing_hedge_mapping": "No hedge mapping",
+    "non_stock_market_excluded": "Non-stock excluded",
+    "not_in_public_directories": "Not in NASDAQ/NYSE",
+    "insufficient_history": "Insufficient history",
+    "negative funding forecast": "Negative forecast",
+    "negative/zero instantaneous funding": "Negative funding",
+    "no funding history": "No funding data",
+}
 
 
 def _render_rejected_table(rejected_list: list[dict], cohort_size: int):
     """Render the enhanced rejected markets table with APR transparency."""
     rej_rows = []
     for r in rejected_list:
+        reason_code = r.get("reason", "unknown")
+        reason_label = _REASON_LABELS.get(reason_code, reason_code)
         row = {
             "Ticker": r["ticker"],
-            "Reason": r["reason"],
+            "Reason": reason_label,
             "Instant APR": fmt_pct(r.get("instant_apr")),
             "Forecast APR": fmt_pct(r.get("forecast_apr")),
             "Score": fmt_pct(r.get("score")),
@@ -124,10 +134,10 @@ with st.sidebar:
     st.caption(f"H_max: {fmt_usd(new_h_max)}")
 
     # Budget feasibility indicator
-    if new_h_max < new_min_ticket:
+    if new_h_max <= 0:
         st.warning(
             f"Budget too small for any position. "
-            f"Min ticket = {fmt_usd(new_min_ticket)}, but H_max = {fmt_usd(new_h_max)}. "
+            f"H_max = {fmt_usd(new_h_max)} (all capital goes to emergency reserve). "
             f"Increase budget above ~{fmt_usd(_min_actionable_budget())} to enable allocation."
         )
 
@@ -158,31 +168,38 @@ if num_positions == 0:
     with st.container():
         st.subheader("Why zero positions?")
         reasons = []
-        if h_max < min_ticket:
+        if h_max <= 0:
             reasons.append(
-                f"**Budget constraint**: H_max ({fmt_usd(h_max)}) < min ticket "
-                f"({fmt_usd(min_ticket)}). No position can meet the minimum size."
+                f"**Budget constraint**: H_max ({fmt_usd(h_max)}) is zero "
+                f"(all capital absorbed by emergency reserve)."
             )
         if deep_scan_cohort == 0:
             reasons.append(
                 "**No markets passed pre-filter**: All mapped markets had negative/zero "
                 "instantaneous funding or failed hard gates."
             )
-        elif not any(r.get("reason", "").startswith("negative funding forecast") for r in rejected):
-            reasons.append(
-                f"**Deep-scanned {deep_scan_cohort} markets** but none had positive "
-                f"forecast APR after EMA smoothing."
-            )
 
-        # Check for specific rejection patterns
-        nasdaq_fails = [r for r in rejected if "not in public directories" in r.get("reason", "")]
-        neg_funding = [r for r in rejected if r.get("reason") == "negative/zero instantaneous funding"]
-        neg_forecast = [r for r in rejected if r.get("reason") == "negative funding forecast"]
+        # Count rejections by structured reason code
+        reason_counts: dict[str, list[dict]] = {}
+        for r in rejected:
+            code = r.get("reason", "unknown")
+            reason_counts.setdefault(code, []).append(r)
+
+        nasdaq_fails = reason_counts.get("not_in_public_directories", [])
+        neg_forecast = reason_counts.get("negative funding forecast", [])
+        insufficient = reason_counts.get("insufficient_history", [])
+        missing_map = reason_counts.get("missing_hedge_mapping", [])
+        non_stock = reason_counts.get("non_stock_market_excluded", [])
 
         if nasdaq_fails:
             reasons.append(
                 f"**{len(nasdaq_fails)} market(s)** rejected: hedge symbol not found in "
                 f"NASDAQ/NYSE directories."
+            )
+        if insufficient:
+            reasons.append(
+                f"**{len(insufficient)} market(s)** rejected: insufficient funding history "
+                f"for EMA computation (need {config.EMA_7D_EPOCHS} 8h epochs)."
             )
         if neg_forecast:
             tickers = ", ".join(r["ticker"] for r in neg_forecast[:5])
@@ -190,11 +207,15 @@ if num_positions == 0:
                 f"**{len(neg_forecast)} market(s)** had negative funding forecast "
                 f"after EMA smoothing ({tickers})."
             )
+        if missing_map:
+            reasons.append(
+                f"**{len(missing_map)} market(s)** have no hedge mapping in config."
+            )
 
         if not reasons:
             reasons.append(
-                "All eligible markets were either too small (below min ticket) or "
-                "had insufficient funding data."
+                "All eligible markets had insufficient data, negative forecasts, "
+                "or risk caps too small for allocation."
             )
 
         for r in reasons:
@@ -202,7 +223,8 @@ if num_positions == 0:
 
         st.caption(
             f"Budget: {fmt_usd(budget)} | H_max: {fmt_usd(h_max)} | "
-            f"Min ticket: {fmt_usd(min_ticket)} | Deep-scanned: {deep_scan_cohort} markets"
+            f"Dust threshold: {fmt_usd(config.ALLOCATION_DUST_USD)} | "
+            f"Deep-scanned: {deep_scan_cohort} markets"
         )
 
     # Still show rejected table below for transparency
