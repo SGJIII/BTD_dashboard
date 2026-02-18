@@ -145,30 +145,28 @@ def _ema(values: list[float], alpha: float) -> float:
     return ema
 
 
-def compute_dual_ema(epochs_8h: list[dict]) -> tuple[float, float]:
+def compute_dual_ema(epochs_8h: list[dict]) -> tuple[float | None, float | None]:
     """Compute 3-day and 7-day EMA from 8h epoch data.
 
-    Returns (ema_3d, ema_7d) as APR percentages.
-    Cold start: if < 9 epochs, use simple mean; if < 21, set ema_7d = ema_3d.
+    Returns (ema_3d, ema_7d) as APR percentages, or None if insufficient data.
+    Requires at least 9 epochs for 3d EMA, at least 21 epochs for 7d EMA.
+    No cold-start shortcuts — both windows must be fully populated.
     """
     apr_values = [e["apr"] for e in epochs_8h]
 
-    if not apr_values:
-        return 0.0, 0.0
+    if len(apr_values) < config.EMA_3D_EPOCHS:
+        return None, None
 
-    # 3-day EMA (9 epochs)
+    # 3-day EMA (9 epochs) — always computed from last 9
     recent_3d = apr_values[-config.EMA_3D_EPOCHS:]
-    if len(recent_3d) < config.EMA_3D_EPOCHS:
-        ema_3d = sum(recent_3d) / len(recent_3d)  # cold start: simple mean
-    else:
-        ema_3d = _ema(recent_3d, config.EMA_3D_ALPHA)
+    ema_3d = _ema(recent_3d, config.EMA_3D_ALPHA)
 
-    # 7-day EMA (21 epochs)
+    # 7-day EMA (21 epochs) — requires full window
+    if len(apr_values) < config.EMA_7D_EPOCHS:
+        return ema_3d, None
+
     recent_7d = apr_values[-config.EMA_7D_EPOCHS:]
-    if len(recent_7d) < config.EMA_7D_EPOCHS:
-        ema_7d = ema_3d  # cold start: use 3d
-    else:
-        ema_7d = _ema(recent_7d, config.EMA_7D_ALPHA)
+    ema_7d = _ema(recent_7d, config.EMA_7D_ALPHA)
 
     return ema_3d, ema_7d
 
@@ -397,6 +395,20 @@ def build_candidates(markets: list[dict], budget: float) -> ScanResult:
                 )
 
             ema_3d, ema_7d = compute_dual_ema(epochs)
+
+            # Strict history requirement: both EMAs must be populated
+            if ema_3d is None or ema_7d is None:
+                rejected.append({
+                    "coin": coin, "ticker": ticker,
+                    "reason": "insufficient_history",
+                    "instant_apr": inst_apr, "pre_rank": ds_rank,
+                    "epochs_available": len(epochs),
+                    "epochs_required_3d": config.EMA_3D_EPOCHS,
+                    "epochs_required_7d": config.EMA_7D_EPOCHS,
+                    "forecast_apr": None, "score": None, "cap_final": None,
+                })
+                continue
+
             seasonality = compute_weekend_seasonality(epochs)
             forecast = forecast_72h_apr(ema_3d, ema_7d, seasonality, weekend)
 

@@ -35,23 +35,53 @@ def test_score_ordering():
     assert s1 > s2
 
 
-def test_dual_ema_cold_start():
-    """With < 9 epochs, ema_3d should be simple mean; ema_7d = ema_3d."""
-    epochs = [{"apr": 10.0 + i} for i in range(5)]
+def test_dual_ema_insufficient_3d():
+    """With < 9 epochs, both EMAs should be None (strict history)."""
+    epochs = [{"apr": 10.0 + i} for i in range(8)]
     ema_3d, ema_7d = compute_dual_ema(epochs)
-    expected_mean = sum(10.0 + i for i in range(5)) / 5
-    assert abs(ema_3d - expected_mean) < 0.01
-    assert abs(ema_7d - ema_3d) < 0.01  # cold start: 7d = 3d
+    assert ema_3d is None
+    assert ema_7d is None
+
+
+def test_dual_ema_sufficient_3d_insufficient_7d():
+    """With 9-20 epochs, ema_3d populated but ema_7d is None."""
+    epochs = [{"apr": 10.0 + i} for i in range(15)]
+    ema_3d, ema_7d = compute_dual_ema(epochs)
+    assert ema_3d is not None
+    assert ema_3d > 0
+    assert ema_7d is None
 
 
 def test_dual_ema_warm():
     """With >= 21 epochs, both EMAs should be computed independently."""
     epochs = [{"apr": 10.0 + i * 0.5} for i in range(25)]
     ema_3d, ema_7d = compute_dual_ema(epochs)
-    assert ema_3d > 0
-    assert ema_7d > 0
+    assert ema_3d is not None and ema_3d > 0
+    assert ema_7d is not None and ema_7d > 0
     # 3d EMA should be more recent-biased
     assert ema_3d != ema_7d
+
+
+def test_dual_ema_constant_converges():
+    """Constant funding history → EMA converges to that constant APR."""
+    epochs = [{"apr": 15.0} for _ in range(30)]
+    ema_3d, ema_7d = compute_dual_ema(epochs)
+    assert abs(ema_3d - 15.0) < 0.01
+    assert abs(ema_7d - 15.0) < 0.01
+
+
+def test_dual_ema_exact_boundary():
+    """Exactly 9 epochs should produce ema_3d but not ema_7d."""
+    epochs = [{"apr": 10.0} for _ in range(9)]
+    ema_3d, ema_7d = compute_dual_ema(epochs)
+    assert ema_3d is not None
+    assert ema_7d is None
+
+    # Exactly 21 should produce both
+    epochs = [{"apr": 10.0} for _ in range(21)]
+    ema_3d, ema_7d = compute_dual_ema(epochs)
+    assert ema_3d is not None
+    assert ema_7d is not None
 
 
 def test_weekend_seasonality_insufficient_data():
