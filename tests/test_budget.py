@@ -12,7 +12,7 @@ def test_budget_buckets_standard():
     assert b["ops_reserve"] == 5_000
     assert b["deployable"] == 640_000 - b["emergency"] - b["ops_reserve"]
     assert b["h_max"] == b["deployable"] / (1 + config.COLLATERAL_FRACTION)
-    assert b["min_ticket"] == max(config.MIN_TICKET_USD, 0.02 * 640_000)
+    assert b["min_ticket"] == config.ALLOCATION_DUST_USD  # waterfall: dust only
 
 
 def test_budget_buckets_small():
@@ -55,11 +55,13 @@ def test_low_budget_no_allocation():
     assert portfolio.positions == []
 
 
-def test_hmax_minticket_boundary():
-    """At the boundary, verify min_ticket is enforced."""
+def test_dust_threshold():
+    """min_ticket is now ALLOCATION_DUST_USD ($100), not the old hard floor."""
     b = config.compute_budget_buckets(640_000)
-    # min_ticket should be max(15000, 0.02 * 640000) = 12800 -> 15000
-    assert b["min_ticket"] == 15_000
+    assert b["min_ticket"] == config.ALLOCATION_DUST_USD
+    # Also verify for small budgets
+    b_small = config.compute_budget_buckets(2_000)
+    assert b_small["min_ticket"] == config.ALLOCATION_DUST_USD
 
 
 def test_emergency_floor_vs_pct():
