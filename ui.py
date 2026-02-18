@@ -46,10 +46,13 @@ def fmt_leverage(val) -> str:
 
 
 def _min_actionable_budget() -> float:
-    """Estimate the minimum budget that produces H_max > dust threshold."""
+    """Estimate the minimum budget that produces H_max > dust threshold.
+
+    Derived from: H_max = (B*(1-EMERGENCY_PCT) - OPS_RESERVE) / (1+COLLATERAL_FRACTION)
+    Solve H_max > dust for B.
+    """
     dust = config.ALLOCATION_DUST_USD
-    return (dust * (1 + config.COLLATERAL_FRACTION)
-            + config.EMERGENCY_FLOOR + config.OPS_RESERVE)
+    return (config.OPS_RESERVE + dust * (1 + config.COLLATERAL_FRACTION)) / (1 - config.EMERGENCY_PCT)
 
 
 _REASON_LABELS = {
@@ -137,7 +140,7 @@ with st.sidebar:
     if new_h_max <= 0:
         st.warning(
             f"Budget too small for any position. "
-            f"H_max = {fmt_usd(new_h_max)} (all capital goes to emergency reserve). "
+            f"H_max = {fmt_usd(new_h_max)} (emergency + ops reserve consume all capital). "
             f"Increase budget above ~{fmt_usd(_min_actionable_budget())} to enable allocation."
         )
 
@@ -171,7 +174,7 @@ if num_positions == 0:
         if h_max <= 0:
             reasons.append(
                 f"**Budget constraint**: H_max ({fmt_usd(h_max)}) is zero "
-                f"(all capital absorbed by emergency reserve)."
+                f"(emergency + ops reserve consume all capital)."
             )
         if deep_scan_cohort == 0:
             reasons.append(

@@ -8,8 +8,8 @@ DEFAULT_BUDGET = 640_000
 
 # ── Risk Parameters ───────────────────────────────────────────────────────────
 COLLATERAL_FRACTION = 0.35          # 15% adverse + 10% maint + 10% buffer
-EMERGENCY_FLOOR = 50_000            # minimum emergency reserve
-EMERGENCY_PCT = 0.08                # 8% of budget; EMERGENCY = max(FLOOR, 0.08*B)
+EMERGENCY_FLOOR = 50_000            # DEPRECATED: not used in runtime math
+EMERGENCY_PCT = 0.08                # 8% of budget; EMERGENCY = 0.08 * B
 OPS_RESERVE = 5_000                 # kept inside Coinbase bucket
 
 # ── Multi-Asset Portfolio Limits ──────────────────────────────────────────────
@@ -137,8 +137,8 @@ def compute_budget_buckets(budget: float) -> BudgetBuckets:
     """Compute budget-derived portfolio buckets with safe lower bounds."""
     b = max(float(budget or 0), 0.0)
 
-    emergency_target = max(EMERGENCY_FLOOR, EMERGENCY_PCT * b)
-    emergency = min(b, emergency_target)
+    # Strictly proportional: E = clamp(EMERGENCY_PCT * B, 0, B)
+    emergency = min(b, EMERGENCY_PCT * b)
 
     remaining = max(0.0, b - emergency)
     ops_reserve = min(OPS_RESERVE, remaining)

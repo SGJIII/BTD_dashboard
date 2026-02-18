@@ -23,27 +23,25 @@ class FakeCandidate:
 
 
 def test_small_budget_nonzero_allocation():
-    """$2k budget with a positive candidate should produce non-zero allocation."""
+    """$2k budget: proportional emergency=$160, ops=$1840, deployable=0."""
     cand = FakeCandidate("xyz:TSLA", "TSLA", "TSLA", 15.0,
                          cap_oi=500, cap_vol=500, cap_impact=500)
     portfolio = build_portfolio([cand], 2_000)
-    # h_max for $2k: emergency=min(2000, 50000)=2000, remaining=0, so h_max=0
-    # At $2k the entire budget goes to emergency — no deployable
-    # This is correct risk behavior, not a min-ticket block
+    # emergency = 0.08 * 2000 = 160, remaining = 1840, ops = min(5000, 1840) = 1840
+    # deployable = 0, h_max = 0
     assert portfolio.num_positions == 0
-    assert portfolio.emergency == 2_000  # entire budget → emergency
+    assert portfolio.emergency == 160  # 8% of $2k
 
 
 def test_moderate_small_budget_allocates():
-    """$80k budget should allocate — was blocked by old $15k min_ticket at some cap levels."""
+    """$80k budget should allocate with proportional emergency."""
     cand = FakeCandidate("xyz:TSLA", "TSLA", "TSLA", 15.0,
                          cap_oi=5_000, cap_vol=5_000, cap_impact=5_000)
     portfolio = build_portfolio([cand], 80_000)
-    # emergency = 50k, remaining = 30k, ops = 5k, deployable = 25k
-    # h_max = 25k / 1.35 ≈ 18518
-    # Old min_ticket = max(15000, 0.02*80k=1600) = 15000
-    # cap_final = min(5000, 5000, 5000, 0.5*18518≈9259) = 5000
-    # Old: 5000 < 15000 → skipped. New: 5000 > 100 → allocated!
+    # emergency = 0.08 * 80k = 6400, remaining = 73600, ops = 5000
+    # deployable = 68600, h_max = 68600/1.35 ≈ 50814
+    # cap_final = min(5000, 5000, 5000, 0.5*50814≈25407) = 5000
+    # 5000 > 100 (dust) → allocated
     assert portfolio.num_positions == 1
     assert portfolio.positions[0].alloc_notional == 5_000
 
