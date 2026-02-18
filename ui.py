@@ -65,6 +65,7 @@ _REASON_LABELS = {
     "no funding history": "No funding data",
     "no_l2_orderbook": "No L2 orderbook",
     "insufficient_orderbook_depth": "Insufficient book depth",
+    "missing_live_funding": "Missing live funding",
 }
 
 
@@ -197,7 +198,13 @@ if num_positions == 0:
         non_stock = reason_counts.get("non_stock_market_excluded", [])
         no_l2 = reason_counts.get("no_l2_orderbook", [])
         insuf_depth = reason_counts.get("insufficient_orderbook_depth", [])
+        missing_funding = reason_counts.get("missing_live_funding", [])
 
+        if missing_funding:
+            reasons.append(
+                f"**{len(missing_funding)} market(s)** rejected: live funding data "
+                f"missing from API payload."
+            )
         l2_total = len(no_l2) + len(insuf_depth)
         if l2_total:
             reasons.append(

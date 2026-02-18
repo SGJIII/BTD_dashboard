@@ -254,7 +254,9 @@ def build_candidates(markets: list[dict], budget: float) -> ScanResult:
         coin = config.normalize_coin(m["coin"])
         ticker = m["ticker"]
 
-        inst_funding_apr = round((m.get("funding_apr") or 0) * 100, 2)  # as %
+        funding_missing = m.get("funding_missing", False)
+        raw_apr = m.get("funding_apr")
+        inst_funding_apr = round((raw_apr or 0) * 100, 2)  # as %
 
         # Hedge mapping check
         hedge_symbol = config.HEDGE_MAP.get(coin)
@@ -287,8 +289,18 @@ def build_candidates(markets: list[dict], budget: float) -> ScanResult:
             })
             continue
 
+        # Missing funding: API didn't return a usable funding value
+        if funding_missing:
+            rejected.append({
+                "coin": coin, "ticker": ticker,
+                "reason": "missing_live_funding",
+                "instant_apr": None,
+                "forecast_apr": None, "score": None, "cap_final": None, "pre_rank": None,
+            })
+            continue
+
         # Skip negative/zero instantaneous funding (no point deep scanning)
-        if (m.get("funding_apr") or 0) <= 0:
+        if (raw_apr or 0) <= 0:
             rejected.append({
                 "coin": coin, "ticker": ticker,
                 "reason": "negative/zero instantaneous funding",

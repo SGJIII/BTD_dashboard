@@ -33,6 +33,7 @@ def test_reason_labels_cover_structured_codes():
         "negative funding forecast",
         "negative/zero instantaneous funding",
         "no funding history",
+        "missing_live_funding",
     ]
     for code in required_codes:
         assert code in labels, f"Missing UI label for reason code: {code}"
@@ -67,3 +68,4 @@ def test_diagnostics_uses_structured_lookup():
     assert 'reason_counts.get("not_in_public_directories"' in source
     assert 'reason_counts.get("insufficient_history"' in source
     assert 'reason_counts.get("missing_hedge_mapping"' in source
+    assert 'reason_counts.get("missing_live_funding"' in source

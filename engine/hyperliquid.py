@@ -144,12 +144,31 @@ def find_max_notional_for_impact(book: dict, max_impact_pct: float) -> float:
     return round(best, 2)
 
 
+def _parse_funding(raw) -> tuple[float | None, bool]:
+    """Parse a raw funding value, distinguishing missing from numeric zero.
+
+    Returns (funding_hourly, funding_missing).
+    - Missing/non-numeric → (None, True)
+    - Valid numeric       → (float_value, False)
+    """
+    if raw is None or raw == "":
+        return None, True
+    try:
+        val = float(raw)
+    except (ValueError, TypeError):
+        return None, True
+    return val, False
+
+
 def parse_market_data(universe: list[dict], ctxs: list[dict]) -> list[dict]:
     """Combine universe metadata + asset contexts into unified market dicts.
 
     Funding is HOURLY. APR = funding_hourly * 24 * 365.
     OI is in base units; OI_USD = openInterest * markPx.
     Ticker names are xyz-prefixed (e.g. 'xyz:TSLA').
+
+    Distinguishes missing funding (None in API) from true 0.00% funding.
+    Sets ``funding_missing=True`` when the funding field is absent or non-numeric.
     """
     markets = []
     for meta, ctx in zip(universe, ctxs):
@@ -157,13 +176,19 @@ def parse_market_data(universe: list[dict], ctxs: list[dict]) -> list[dict]:
             name = meta["name"]  # e.g. "xyz:TSLA"
             mark_px = float(ctx.get("markPx") or 0)
             mid_px = float(ctx.get("midPx") or 0)
-            funding_hourly = float(ctx.get("funding") or 0)
+
+            funding_hourly, funding_missing = _parse_funding(ctx.get("funding"))
+
             oi_base = float(ctx.get("openInterest") or 0)
             volume_24h = float(ctx.get("dayNtlVlm") or 0)
             max_leverage = int(meta.get("maxLeverage") or 1)
 
             # Funding is hourly — annualize correctly
-            funding_apr = funding_hourly * 24 * 365
+            if funding_missing:
+                funding_apr = None
+            else:
+                funding_apr = funding_hourly * 24 * 365
+
             # OI in base units → multiply by mark price for USD
             oi_usd = oi_base * mark_px
 
@@ -176,7 +201,8 @@ def parse_market_data(universe: list[dict], ctxs: list[dict]) -> list[dict]:
                 "mark_px": mark_px,
                 "mid_px": mid_px,
                 "funding_hourly": funding_hourly,
-                "funding_apr": funding_apr,  # as decimal (e.g. 0.20 = 20%)
+                "funding_apr": funding_apr,  # as decimal (e.g. 0.20 = 20%) or None
+                "funding_missing": funding_missing,
                 "oi_base": oi_base,
                 "oi_usd": oi_usd,
                 "volume_24h": volume_24h,
